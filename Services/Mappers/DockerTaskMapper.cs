@@ -5,7 +5,9 @@ namespace InfinityAI.Docker.Services.Mappers;
 
 public static class DockerTaskMapper
 {
-    public static DockerTaskDto Map(TaskResponse task, IDictionary<string, string> nodeHostnames)
+    // restartCount: number of previous tasks for this slot (computed by caller from task history).
+    // NOT the container ExitCode — that field was incorrectly used here previously.
+    public static DockerTaskDto Map(TaskResponse task, IDictionary<string, string> nodeHostnames, long restartCount = 0)
     {
         nodeHostnames.TryGetValue(task.NodeID ?? string.Empty, out var hostname);
 
@@ -22,7 +24,7 @@ public static class DockerTaskMapper
             ErrorMessage = task.Status?.Err,
             StartedAt = task.Status?.Timestamp,
             UpdatedAt = task.UpdatedAt,
-            RestartCount = task.Status?.ContainerStatus?.ExitCode ?? 0
+            RestartCount = restartCount
         };
     }
 }

@@ -66,9 +66,22 @@ public sealed class DockerInventoryPoller(
             foreach (var svc in services)
             {
                 var svcTasks = tasksByService.TryGetValue(svc.ID ?? string.Empty, out var t) ? t : [];
-                var taskDtos = svcTasks
-                    .Select(t => DockerTaskMapper.Map(t, nodeHostnames))
-                    .ToList();
+
+                // Restart count per slot = number of shutdown (replaced) tasks with the same slot.
+                // Docker Swarm creates a new Task each time a task is recycled; the old one gets
+                // DesiredState=shutdown. This is the only reliable restart count in the Swarm API.
+                var historicalCountBySlot = svcTasks
+                    .GroupBy(t2 => t2.Slot)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => (long)g.Count(t2 => t2.DesiredState.ToString().ToLowerInvariant() == "shutdown"));
+
+                var taskDtos = svcTasks.Select(t2 =>
+                {
+                    bool isCurrent = t2.DesiredState.ToString().ToLowerInvariant() != "shutdown";
+                    long rc = isCurrent && historicalCountBySlot.TryGetValue(t2.Slot, out var n) ? n : 0L;
+                    return DockerTaskMapper.Map(t2, nodeHostnames, rc);
+                }).ToList();
 
                 var dto = serviceMapper.Map(svc, taskDtos, networkNames);
                 allServiceDtos.Add(dto);
