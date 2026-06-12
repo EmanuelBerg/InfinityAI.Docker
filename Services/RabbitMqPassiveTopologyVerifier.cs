@@ -9,11 +9,14 @@ public sealed class RabbitMqPassiveTopologyVerifier(
     IConfiguration configuration,
     ILogger<RabbitMqPassiveTopologyVerifier> logger)
 {
-    // The Phase 1 exchange this worker publishes to.
-    // RabbitMqTopologyInitializer in InfinityAI.Api owns the declaration.
     public const string InventoryExchange = "docker.inventory";
+    public const string CommandsExchange  = "docker.commands";
+    public const string ProgressExchange  = "docker.progress";
+    public const string LogsExchange      = "docker.logs";
 
-    private static readonly string[] RequiredExchanges = [InventoryExchange];
+    // Command worker requires all four exchanges to be pre-declared by InfinityAI.Api.
+    private static readonly string[] RequiredExchanges =
+        [InventoryExchange, CommandsExchange, ProgressExchange, LogsExchange];
 
     public async Task VerifyAsync(CancellationToken ct)
     {

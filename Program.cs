@@ -25,8 +25,13 @@ builder.Services.AddSingleton<DockerCacheService>();
 builder.Services.AddSingleton<DockerInventoryPublisher>();
 builder.Services.AddSingleton<RabbitMqPassiveTopologyVerifier>();
 
+builder.Services.AddSingleton<DockerProgressPublisher>();
+builder.Services.AddSingleton<DockerLogPublisher>();
+builder.Services.AddSingleton<IDockerCommandExecutor, DockerCommandExecutor>();
+
 builder.Services.AddHostedService<DockerInventoryPoller>();
 builder.Services.AddHostedService<DockerStatsCollector>();
+builder.Services.AddHostedService<DockerCommandConsumer>();
 
 var host = builder.Build();
 host.Run();
