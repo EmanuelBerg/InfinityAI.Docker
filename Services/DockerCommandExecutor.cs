@@ -121,6 +121,8 @@ public sealed class DockerCommandExecutor(
     {
         cmd.Parameters.TryGetValue("subscriptionId", out var subscriptionId);
         cmd.Parameters.TryGetValue("tail",           out var tail);
+        logger.LogInformation("[DOCKER-LOGS] logs.start received svc={Svc} sub={Sub}",
+            cmd.ServiceId, subscriptionId ?? "(none)");
         if (string.IsNullOrWhiteSpace(subscriptionId)) return Task.CompletedTask;
 
         var cts = CancellationTokenSource.CreateLinkedTokenSource(workerCt);
@@ -154,11 +156,15 @@ public sealed class DockerCommandExecutor(
         string serviceId, string serviceName, string subscriptionId,
         string tail, CancellationToken ct)
     {
-        logger.LogInformation("[DOCKER-LOGS] Starting log stream sub={Sub} svc={Svc}", subscriptionId, serviceId);
+        logger.LogInformation("[DOCKER-LOGS] Starting stream sub={Sub} svc={Svc} tail={Tail}",
+            subscriptionId, serviceId, tail);
 
+        var linesPublished = 0;
         try
         {
             var client = clientFactory.GetClient();
+
+            logger.LogInformation("[DOCKER-LOGS] Calling Docker API GetServiceLogsAsync svc={Svc}", serviceId);
             using var stream = await client.Swarm.GetServiceLogsAsync(
                 serviceId,
                 tty: false,
@@ -171,6 +177,8 @@ public sealed class DockerCommandExecutor(
                     Tail        = tail
                 },
                 ct);
+
+            logger.LogInformation("[DOCKER-LOGS] Docker stream opened sub={Sub}", subscriptionId);
 
             var buffer = new byte[4096];
             while (!ct.IsCancellationRequested)
@@ -194,18 +202,21 @@ public sealed class DockerCommandExecutor(
                         Line           = line.TrimEnd('\r'),
                         OccurredAt     = DateTime.UtcNow
                     }, ct);
+                    linesPublished++;
                 }
             }
         }
         catch (OperationCanceledException) { /* normal stop */ }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "[DOCKER-LOGS] Log stream error sub={Sub}", subscriptionId);
+            logger.LogError(ex, "[DOCKER-LOGS] Stream error sub={Sub} svc={Svc} linesPublished={N}",
+                subscriptionId, serviceId, linesPublished);
         }
         finally
         {
             _logStreams.TryRemove(subscriptionId, out _);
-            logger.LogInformation("[DOCKER-LOGS] Log stream ended sub={Sub}", subscriptionId);
+            logger.LogInformation("[DOCKER-LOGS] Stream ended sub={Sub} linesPublished={N} reason=finished/cancelled",
+                subscriptionId, linesPublished);
         }
     }
 
