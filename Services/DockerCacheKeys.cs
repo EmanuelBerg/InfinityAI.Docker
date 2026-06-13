@@ -24,4 +24,7 @@ public static class DockerCacheKeys
     public static string Stack(string stackName) => $"{StackPrefix}{stackName}";
     public static string Service(string serviceId) => $"{ServicePrefix}{serviceId}";
     public static string Stats(string serviceId) => $"{StatsPrefix}{serviceId}";
+
+    public const string HealthAckPrefix = "infinity:docker:health:ack:";
+    public static string HealthAck(string serviceId) => $"{HealthAckPrefix}{serviceId}";
 }

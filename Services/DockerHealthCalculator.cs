@@ -6,7 +6,9 @@ public static class DockerHealthCalculator
 {
     public const int Version = 1;
 
-    public static (int Score, string Status, List<string> Flags) Calculate(DockerServiceDto service)
+    public static (int Score, string Status, List<string> Flags) Calculate(
+        DockerServiceDto service,
+        DateTime? clearedBeforeUtc = null)
     {
         var flags = new List<string>();
         int score = 100;
@@ -32,8 +34,12 @@ public static class DockerHealthCalculator
         }
 
         // Factor 2: Task failure states (20 points)
+        // With ack: current failures always count; historical failures only if after clearedBeforeUtc.
         var failedTasks = service.Tasks.Count(t =>
-            t.State is "failed" or "rejected" or "orphaned");
+            t.State is "failed" or "rejected" or "orphaned" &&
+            (clearedBeforeUtc is null ||
+             t.DesiredState?.ToLowerInvariant() != "shutdown" ||
+             (t.UpdatedAt.HasValue && t.UpdatedAt.Value > clearedBeforeUtc.Value)));
         if (failedTasks > 0)
         {
             int penalty = Math.Min(20, failedTasks * 5);
@@ -42,7 +48,22 @@ public static class DockerHealthCalculator
         }
 
         // Factor 3: High restart count (15 points)
-        long maxRestarts = service.Tasks.Any() ? service.Tasks.Max(t => t.RestartCount) : 0;
+        // With ack: count only historical task records (shutdown) with UpdatedAt after clearedBeforeUtc.
+        long maxRestarts;
+        if (clearedBeforeUtc.HasValue)
+        {
+            maxRestarts = service.Tasks
+                .Where(t => t.DesiredState?.ToLowerInvariant() == "shutdown" &&
+                            t.UpdatedAt.HasValue && t.UpdatedAt.Value > clearedBeforeUtc.Value)
+                .GroupBy(t => t.Slot)
+                .Select(g => (long)g.Count())
+                .DefaultIfEmpty(0L)
+                .Max();
+        }
+        else
+        {
+            maxRestarts = service.Tasks.Any() ? service.Tasks.Max(t => t.RestartCount) : 0;
+        }
         if (maxRestarts >= 10)
         {
             score -= 15;
@@ -76,6 +97,9 @@ public static class DockerHealthCalculator
             score -= 5;
             flags.Add("global_no_constraints");
         }
+
+        if (clearedBeforeUtc.HasValue)
+            flags.Add("health_issues_acknowledged");
 
         score = Math.Max(0, score);
 

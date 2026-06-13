@@ -31,4 +31,5 @@ public sealed class DockerServiceDto
     public string? RestartCondition { get; init; }
     public long? RestartMaxAttempts { get; init; }
     public string? PlacementDelayFormatted { get; init; }
+    public DockerHealthAcknowledgementDto? HealthAcknowledgement { get; init; }
 }

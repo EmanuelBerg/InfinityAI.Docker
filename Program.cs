@@ -27,6 +27,7 @@ builder.Services.AddSingleton<DockerMetrics>();
 builder.Services.AddSingleton<ServiceSnapshotDiffTracker>();
 builder.Services.AddSingleton<DockerServiceMapper>();
 builder.Services.AddSingleton<DockerCacheService>();
+builder.Services.AddSingleton<DockerAckCacheService>();
 builder.Services.AddSingleton<DockerInventoryPublisher>();
 builder.Services.AddSingleton<RabbitMqPassiveTopologyVerifier>();
 

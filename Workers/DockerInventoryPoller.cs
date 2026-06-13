@@ -16,6 +16,7 @@ public sealed class DockerInventoryPoller(
     DockerClientFactory clientFactory,
     DockerServiceMapper serviceMapper,
     DockerCacheService cache,
+    DockerAckCacheService ackCache,
     DockerInventoryPublisher publisher,
     ServiceSnapshotDiffTracker diffTracker,
     RabbitMqPassiveTopologyVerifier topologyVerifier,
@@ -62,6 +63,11 @@ public sealed class DockerInventoryPoller(
                 n => n.ID ?? string.Empty,
                 n => n.Name ?? string.Empty);
 
+            // Read active health acknowledgements from Redis (batch) so health calculator
+            // can ignore pre-ack task failures and restart counts for each service.
+            var acks = await ackCache.GetAcksAsync(
+                services.Select(s => s.ID ?? string.Empty), ct);
+
             var allServiceDtos = new List<DockerServiceDto>();
             foreach (var svc in services)
             {
@@ -83,7 +89,8 @@ public sealed class DockerInventoryPoller(
                     return DockerTaskMapper.Map(t2, nodeHostnames, rc);
                 }).ToList();
 
-                var dto = serviceMapper.Map(svc, taskDtos, networkNames);
+                acks.TryGetValue(svc.ID ?? string.Empty, out var ack);
+                var dto = serviceMapper.Map(svc, taskDtos, networkNames, ack);
                 allServiceDtos.Add(dto);
             }
 

@@ -12,7 +12,8 @@ public sealed class DockerServiceMapper(IOptions<DockerOptions> options)
     public DockerServiceDto Map(
         SwarmService service,
         IReadOnlyList<DockerTaskDto> tasks,
-        IDictionary<string, string> networkNames)
+        IDictionary<string, string> networkNames,
+        DockerHealthAcknowledgementDto? acknowledgement = null)
     {
         var serviceLabels = service.Spec?.Labels ?? new Dictionary<string, string>();
         var containerLabels = service.Spec?.TaskTemplate?.ContainerSpec?.Labels ?? new Dictionary<string, string>();
@@ -122,7 +123,7 @@ public sealed class DockerServiceMapper(IOptions<DockerOptions> options)
             HealthScoreVersion = DockerHealthCalculator.Version
         };
 
-        var (score, status, flags) = DockerHealthCalculator.Calculate(draft);
+        var (score, status, flags) = DockerHealthCalculator.Calculate(draft, acknowledgement?.ClearedBeforeUtc);
 
         return new DockerServiceDto
         {
@@ -154,7 +155,8 @@ public sealed class DockerServiceMapper(IOptions<DockerOptions> options)
             HealthScore = score,
             HealthStatus = status,
             HealthFlags = flags,
-            HealthScoreVersion = DockerHealthCalculator.Version
+            HealthScoreVersion = DockerHealthCalculator.Version,
+            HealthAcknowledgement = acknowledgement
         };
     }
 
