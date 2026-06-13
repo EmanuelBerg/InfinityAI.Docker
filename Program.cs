@@ -14,8 +14,13 @@ builder.Services.Configure<DockerOptions>(
     builder.Configuration.GetSection("DockerOptions"));
 
 var redisConnectionString = builder.Configuration["RedisConnectionString"] ?? "redis:6379";
-builder.Services.AddSingleton<IConnectionMultiplexer>(
-    ConnectionMultiplexer.Connect(redisConnectionString));
+builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
+{
+    var opts = ConfigurationOptions.Parse(redisConnectionString);
+    opts.AbortOnConnectFail = false;
+    opts.ConnectRetry = 5;
+    return ConnectionMultiplexer.Connect(opts);
+});
 
 builder.Services.AddSingleton<DockerClientFactory>();
 builder.Services.AddSingleton<DockerMetrics>();

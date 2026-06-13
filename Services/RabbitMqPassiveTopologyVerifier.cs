@@ -21,51 +21,55 @@ public sealed class RabbitMqPassiveTopologyVerifier(
     public async Task VerifyAsync(CancellationToken ct)
     {
         var server = configuration["RabbitMQServer"] ?? "rabbitmq";
-        var port = int.TryParse(configuration["RabbitMQPort"], out int p) ? p : 5672;
+        var port   = int.TryParse(configuration["RabbitMQPort"], out int p) ? p : 5672;
 
-        const int maxAttempts = 3;
-        const int retryDelayMs = 5000;
-
-        for (int attempt = 1; attempt <= maxAttempts; attempt++)
+        int attempt = 0;
+        while (!ct.IsCancellationRequested)
         {
+            attempt++;
             try
             {
                 var factory = new ConnectionFactory
                 {
-                    HostName = server,
-                    Port = port,
+                    HostName               = server,
+                    Port                   = port,
                     AutomaticRecoveryEnabled = false
                 };
 
                 await using var connection = await factory.CreateConnectionAsync(ct);
-                await using var channel = await connection.CreateChannelAsync(cancellationToken: ct);
+                await using var channel   = await connection.CreateChannelAsync(cancellationToken: ct);
 
                 foreach (var exchange in RequiredExchanges)
                 {
                     await channel.ExchangeDeclarePassiveAsync(exchange, ct);
-                    logger.LogInformation("RabbitMQ exchange '{Exchange}' verified", exchange);
+                    logger.LogInformation("[STARTUP-WAIT] RabbitMQ exchange '{Exchange}' verified", exchange);
                 }
 
+                if (attempt > 1)
+                    logger.LogInformation("[STARTUP-WAIT] RabbitMQ topology verified after {Attempt} attempt(s)", attempt);
+
+                return;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
                 return;
             }
             catch (OperationInterruptedException ex) when (ex.ShutdownReason?.ReplyCode == 404)
             {
-                logger.LogError(
-                    "RabbitMQ topology verification failed: exchange not found. " +
-                    "Ensure RabbitMqTopologyInitializer has run in InfinityAI.Api. Attempt {Attempt}/{Max}",
-                    attempt, maxAttempts);
-
-                if (attempt < maxAttempts)
-                    await Task.Delay(retryDelayMs, ct);
-                else
-                    throw;
+                // Exchange not yet declared — InfinityAI.Api topology initializer still running.
+                logger.LogWarning(
+                    "[STARTUP-WAIT] RabbitMQ topology not ready (attempt {Attempt}) — " +
+                    "waiting for InfinityAI.Api to declare exchanges: {Msg}",
+                    attempt, ex.Message);
+                await Task.Delay(5_000, ct);
             }
-            catch (Exception ex) when (attempt < maxAttempts)
+            catch (Exception ex)
             {
-                logger.LogWarning(ex,
-                    "RabbitMQ topology verification attempt {Attempt}/{Max} failed, retrying in {Delay}ms",
-                    attempt, maxAttempts, retryDelayMs);
-                await Task.Delay(retryDelayMs, ct);
+                // Connection refused or other transient error — RabbitMQ not yet reachable.
+                logger.LogWarning(
+                    "[STARTUP-WAIT] RabbitMQ not reachable (attempt {Attempt}): {Msg}",
+                    attempt, ex.Message);
+                await Task.Delay(5_000, ct);
             }
         }
     }
