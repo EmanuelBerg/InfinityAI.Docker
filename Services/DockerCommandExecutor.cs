@@ -287,11 +287,20 @@ public sealed class DockerCommandExecutor(
     public async Task PruneImagesAsync(DockerCommandMessage cmd, CancellationToken ct)
     {
         await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
-            "in_progress", "Pruning dangling images…", 10, ct: ct);
+            "in_progress", "Pruning unused images…", 10, ct: ct);
         try
         {
-            var client   = clientFactory.GetClient();
-            var response = await client.Images.PruneImagesAsync(cancellationToken: ct);
+            var client = clientFactory.GetClient();
+            // dangling=false → remove ALL images not used by any container (equivalent to docker image prune -a).
+            // This matches the "Reclaimable" definition (ContainerCount == 0) in the Storage tab.
+            var pruneParams = new DockerModels.ImagesPruneParameters
+            {
+                Filters = new Dictionary<string, IDictionary<string, bool>>
+                {
+                    ["dangling"] = new Dictionary<string, bool> { ["false"] = true }
+                }
+            };
+            var response = await client.Images.PruneImagesAsync(pruneParams, ct);
             var reclaimed = response.SpaceReclaimed;
             var count     = response.ImagesDeleted?.Count ?? 0;
 
@@ -397,12 +406,19 @@ public sealed class DockerCommandExecutor(
             }
             catch (Exception ex) { logger.LogWarning(ex, "[DOCKER-PRUNE] system.prune containers step failed"); }
 
-            // 2. Images
+            // 2. Images — remove all unused (not just dangling) to match PruneImagesAsync behavior
             await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
                 "in_progress", "Pruning unused images…", 50, ct: ct);
             try
             {
-                var iResponse = await client.Images.PruneImagesAsync(cancellationToken: ct);
+                var imgPruneParams = new DockerModels.ImagesPruneParameters
+                {
+                    Filters = new Dictionary<string, IDictionary<string, bool>>
+                    {
+                        ["dangling"] = new Dictionary<string, bool> { ["false"] = true }
+                    }
+                };
+                var iResponse = await client.Images.PruneImagesAsync(imgPruneParams, ct);
                 totalReclaimed += (long)iResponse.SpaceReclaimed;
                 results.Add($"{iResponse.ImagesDeleted?.Count ?? 0} image(s)");
             }

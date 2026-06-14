@@ -90,9 +90,12 @@ public sealed class DockerStorageAnalyzer(
                 ContainerCount = 0 // would require inspect per volume — skipped for performance
             }).ToList();
 
-            // Total size includes all images on disk. Reclaimable = only truly dangling ones.
+            // Total size includes all images on disk.
+            // Reclaimable = all images with ContainerCount == 0 (no container is using them).
+            // This matches the "unused" label in the Storage tab and what PruneImagesAsync removes.
+            // DanglingImageCount is tracked separately (cosmetic indicator for truly orphaned images).
             long totalImageBytes = imageDtos.Sum(i => i.SizeBytes);
-            long reclaimable     = imageDtos.Where(i => i.IsDangling).Sum(i => i.SizeBytes);
+            long reclaimable     = imageDtos.Where(i => i.ContainerCount == 0).Sum(i => i.SizeBytes);
             var  danglingImages  = imageDtos.Where(i => i.IsDangling).ToList();
 
             return new DockerStorageAnalysisDto
