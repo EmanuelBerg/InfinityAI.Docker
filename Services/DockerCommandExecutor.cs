@@ -7,12 +7,14 @@ using Microsoft.Extensions.Logging;
 
 namespace InfinityAI.Docker.Services;
 
-// Executes Docker Swarm operations: restart, upgrade, and log streaming.
+// Executes Docker Swarm operations: restart, upgrade, log streaming, and cleanup.
 // Log streams are tracked by subscriptionId so a stop command can cancel them.
 public sealed class DockerCommandExecutor(
     DockerClientFactory clientFactory,
     DockerProgressPublisher progressPublisher,
     DockerLogPublisher logPublisher,
+    DockerStorageAnalyzer storageAnalyzer,
+    DockerCacheService cache,
     ILogger<DockerCommandExecutor> logger) : IDockerCommandExecutor
 {
     private const DockerModels.TaskState _stateRunning  = DockerModels.TaskState.Running;
@@ -296,6 +298,7 @@ public sealed class DockerCommandExecutor(
             logger.LogInformation("[DOCKER-PRUNE] images.prune op={Op} deleted={N} reclaimed={Bytes}",
                 cmd.OperationId, count, reclaimed);
 
+            await RefreshStorageAsync(ct);
             await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
                 "completed", $"Removed {count} image(s), reclaimed {FormatBytes((long?)reclaimed)}", 100, ct: ct);
         }
@@ -324,6 +327,7 @@ public sealed class DockerCommandExecutor(
             logger.LogInformation("[DOCKER-PRUNE] containers.prune op={Op} deleted={N} reclaimed={Bytes}",
                 cmd.OperationId, count, reclaimed);
 
+            await RefreshStorageAsync(ct);
             await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
                 "completed", $"Removed {count} container(s), reclaimed {FormatBytes((long?)reclaimed)}", 100, ct: ct);
         }
@@ -352,6 +356,7 @@ public sealed class DockerCommandExecutor(
             logger.LogInformation("[DOCKER-PRUNE] volumes.prune op={Op} deleted={N} reclaimed={Bytes}",
                 cmd.OperationId, count, reclaimed);
 
+            await RefreshStorageAsync(ct);
             await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
                 "completed", $"Removed {count} volume(s), reclaimed {FormatBytes((long?)reclaimed)}", 100, ct: ct);
         }
@@ -424,6 +429,7 @@ public sealed class DockerCommandExecutor(
             logger.LogInformation("[DOCKER-PRUNE] system.prune op={Op} reclaimed={Bytes} includeVolumes={V}",
                 cmd.OperationId, totalReclaimed, includeVolumes);
 
+            await RefreshStorageAsync(ct);
             await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
                 "completed", summary, 100, ct: ct);
         }
@@ -433,6 +439,25 @@ public sealed class DockerCommandExecutor(
             logger.LogError(ex, "[DOCKER-PRUNE] system.prune failed op={Op}", cmd.OperationId);
             await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
                 "failed", "System prune failed", 0, ex.Message, ct: ct);
+        }
+    }
+
+    // ── Storage refresh ───────────────────────────────────────────────────────
+
+    // Called after each prune to immediately update the Redis storage snapshot so
+    // the Storage tab reflects the freed space without waiting for the next scheduled poll.
+    private async Task RefreshStorageAsync(CancellationToken ct)
+    {
+        try
+        {
+            var analysis = await storageAnalyzer.AnalyzeAsync(ct);
+            if (analysis is not null)
+                await cache.WriteStorageAnalysisAsync(analysis, ct);
+        }
+        catch (OperationCanceledException) { /* ignore — worker is stopping */ }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "[DOCKER-PRUNE] Post-prune storage refresh failed — stale data may persist until next poll");
         }
     }
 
