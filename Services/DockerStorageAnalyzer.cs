@@ -37,14 +37,39 @@ public sealed class DockerStorageAnalyzer(
 
             var imageDtos = images.Select(img =>
             {
-                var repoTags = img.RepoTags?.FirstOrDefault() ?? "<none>:<none>";
-                var colon    = repoTags.LastIndexOf(':');
-                var repo     = colon >= 0 ? repoTags[..colon]       : repoTags;
-                var tag      = colon >= 0 ? repoTags[(colon + 1)..] : string.Empty;
-                var isDangling = string.IsNullOrEmpty(img.RepoTags?.FirstOrDefault())
-                              || img.RepoTags!.FirstOrDefault() == "<none>:<none>";
-
                 containersByImage.TryGetValue(img.ID ?? string.Empty, out var containerCount);
+
+                // Prefer a repo:tag entry; fall back to the first digest reference.
+                // Images in Swarm pulled by digest have empty RepoTags but non-empty RepoDigests.
+                var firstTag    = img.RepoTags?.FirstOrDefault(t => t != "<none>:<none>");
+                var firstDigest = img.RepoDigests?.FirstOrDefault(d => d != "<none>@<none>");
+                var reference   = firstTag ?? firstDigest ?? "<none>:<none>";
+
+                string repo, tag;
+                if (firstTag is not null)
+                {
+                    var colon = reference.LastIndexOf(':');
+                    repo = colon >= 0 ? reference[..colon]       : reference;
+                    tag  = colon >= 0 ? reference[(colon + 1)..] : string.Empty;
+                }
+                else if (firstDigest is not null)
+                {
+                    // Display as repo@sha256:short
+                    var at   = firstDigest.LastIndexOf('@');
+                    repo = at >= 0 ? firstDigest[..at] : firstDigest;
+                    tag  = at >= 0 ? firstDigest[(at + 1)..] : string.Empty; // e.g. "sha256:abcd1234"
+                }
+                else
+                {
+                    repo = "<none>";
+                    tag  = "<none>";
+                }
+
+                // An image is truly dangling only when it has no tag, no digest reference,
+                // and no running container uses it. Swarm images pulled by digest are NOT dangling.
+                var isDangling = firstTag is null
+                              && firstDigest is null
+                              && containerCount == 0;
 
                 return new DockerImageInfoDto
                 {
@@ -65,14 +90,15 @@ public sealed class DockerStorageAnalyzer(
                 ContainerCount = 0 // would require inspect per volume — skipped for performance
             }).ToList();
 
-            var danglingImages   = imageDtos.Where(i => i.IsDangling).ToList();
-            long totalImageBytes = imageDtos.Where(i => !i.IsDangling).Sum(i => i.SizeBytes);
-            long reclaimable     = danglingImages.Sum(i => i.SizeBytes);
+            // Total size includes all images on disk. Reclaimable = only truly dangling ones.
+            long totalImageBytes = imageDtos.Sum(i => i.SizeBytes);
+            long reclaimable     = imageDtos.Where(i => i.IsDangling).Sum(i => i.SizeBytes);
+            var  danglingImages  = imageDtos.Where(i => i.IsDangling).ToList();
 
             return new DockerStorageAnalysisDto
             {
                 CollectedAt           = DateTime.UtcNow,
-                Images                = imageDtos.Where(i => !i.IsDangling).ToList(),
+                Images                = imageDtos, // all images, including digest-only Swarm images
                 Volumes               = volumeDtos,
                 TotalImageBytes       = totalImageBytes,
                 ReclaimableImageBytes = reclaimable,

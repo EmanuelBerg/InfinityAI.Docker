@@ -71,8 +71,8 @@ public sealed class HostMetricsPoller(
             logger.LogError(ex, "[HOST-METRICS] Host metrics poll failed");
         }
 
-        // Storage analysis on a slower cycle (every N polls).
-        if (_pollCount % StorageAnalysisEveryNPolls == 0)
+        // Storage analysis: run immediately on first poll, then every N polls (~5 min).
+        if (_pollCount == 1 || _pollCount % StorageAnalysisEveryNPolls == 0)
         {
             try
             {
