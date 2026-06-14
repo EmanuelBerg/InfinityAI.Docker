@@ -131,4 +131,64 @@ public sealed class DockerCacheService(IConnectionMultiplexer redis, ILogger<Doc
         var tasks = services.Select(s => WriteServiceAsync(s, ct));
         await Task.WhenAll(tasks);
     }
+
+    // ── Host metrics ──────────────────────────────────────────────────────────────
+
+    public async Task WriteHostMetricsAsync(DockerHostMetricsDto metrics, CancellationToken ct)
+    {
+        var db = redis.GetDatabase();
+        try
+        {
+            var json = JsonSerializer.Serialize(metrics, _json);
+            await db.StringSetAsync(DockerCacheKeys.HostMetrics, json);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to write host metrics to Redis");
+        }
+    }
+
+    // Appends a sample to the history list and trims to the retention window.
+    public async Task AppendHostMetricsHistoryAsync(DockerHostMetricsDto metrics, CancellationToken ct)
+    {
+        var db = redis.GetDatabase();
+        try
+        {
+            // Lightweight history entry — only the fields needed for sparkline charts.
+            var entry = new
+            {
+                ts  = metrics.CollectedAt,
+                cpu = metrics.Cpu.UsagePercent,
+                mem = metrics.Memory.UsagePercent,
+                dsk = metrics.Disk.UsagePercent,
+                ld1 = metrics.Load.Load1,
+                sc  = metrics.HostHealthScore
+            };
+            var json = JsonSerializer.Serialize(entry, _json);
+            // Push to left (newest first), then trim from the right.
+            await db.ListLeftPushAsync(DockerCacheKeys.HostMetricsHistory, json);
+            await db.ListTrimAsync(DockerCacheKeys.HostMetricsHistory,
+                0, DockerCacheKeys.HostMetricsHistoryMaxEntries - 1);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to append host metrics history to Redis");
+        }
+    }
+
+    // ── Storage analysis ──────────────────────────────────────────────────────────
+
+    public async Task WriteStorageAnalysisAsync(DockerStorageAnalysisDto analysis, CancellationToken ct)
+    {
+        var db = redis.GetDatabase();
+        try
+        {
+            var json = JsonSerializer.Serialize(analysis, _json);
+            await db.StringSetAsync(DockerCacheKeys.StorageAnalysis, json);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to write storage analysis to Redis");
+        }
+    }
 }

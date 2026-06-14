@@ -280,6 +280,174 @@ public sealed class DockerCommandExecutor(
         }
     }
 
+    // ── Prune: images ─────────────────────────────────────────────────────────
+
+    public async Task PruneImagesAsync(DockerCommandMessage cmd, CancellationToken ct)
+    {
+        await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
+            "in_progress", "Pruning dangling images…", 10, ct: ct);
+        try
+        {
+            var client   = clientFactory.GetClient();
+            var response = await client.Images.PruneImagesAsync(cancellationToken: ct);
+            var reclaimed = response.SpaceReclaimed;
+            var count     = response.ImagesDeleted?.Count ?? 0;
+
+            logger.LogInformation("[DOCKER-PRUNE] images.prune op={Op} deleted={N} reclaimed={Bytes}",
+                cmd.OperationId, count, reclaimed);
+
+            await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
+                "completed", $"Removed {count} image(s), reclaimed {FormatBytes((long?)reclaimed)}", 100, ct: ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "[DOCKER-PRUNE] images.prune failed op={Op}", cmd.OperationId);
+            await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
+                "failed", "Image prune failed", 0, ex.Message, ct: ct);
+        }
+    }
+
+    // ── Prune: containers ─────────────────────────────────────────────────────
+
+    public async Task PruneContainersAsync(DockerCommandMessage cmd, CancellationToken ct)
+    {
+        await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
+            "in_progress", "Pruning stopped containers…", 10, ct: ct);
+        try
+        {
+            var client   = clientFactory.GetClient();
+            var response = await client.Containers.PruneContainersAsync(cancellationToken: ct);
+            var reclaimed = response.SpaceReclaimed;
+            var count     = response.ContainersDeleted?.Count ?? 0;
+
+            logger.LogInformation("[DOCKER-PRUNE] containers.prune op={Op} deleted={N} reclaimed={Bytes}",
+                cmd.OperationId, count, reclaimed);
+
+            await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
+                "completed", $"Removed {count} container(s), reclaimed {FormatBytes((long?)reclaimed)}", 100, ct: ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "[DOCKER-PRUNE] containers.prune failed op={Op}", cmd.OperationId);
+            await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
+                "failed", "Container prune failed", 0, ex.Message, ct: ct);
+        }
+    }
+
+    // ── Prune: volumes ────────────────────────────────────────────────────────
+
+    public async Task PruneVolumesAsync(DockerCommandMessage cmd, CancellationToken ct)
+    {
+        await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
+            "in_progress", "Pruning unused volumes…", 10, ct: ct);
+        try
+        {
+            var client   = clientFactory.GetClient();
+            var response = await client.Volumes.PruneAsync(cancellationToken: ct);
+            var reclaimed = response.SpaceReclaimed;
+            var count     = response.VolumesDeleted?.Count ?? 0;
+
+            logger.LogInformation("[DOCKER-PRUNE] volumes.prune op={Op} deleted={N} reclaimed={Bytes}",
+                cmd.OperationId, count, reclaimed);
+
+            await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
+                "completed", $"Removed {count} volume(s), reclaimed {FormatBytes((long?)reclaimed)}", 100, ct: ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "[DOCKER-PRUNE] volumes.prune failed op={Op}", cmd.OperationId);
+            await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
+                "failed", "Volume prune failed", 0, ex.Message, ct: ct);
+        }
+    }
+
+    // ── Prune: system (images + containers + networks, optionally volumes) ────
+
+    public async Task PruneSystemAsync(DockerCommandMessage cmd, CancellationToken ct)
+    {
+        cmd.Parameters.TryGetValue("includeVolumes", out var includeVolumesStr);
+        var includeVolumes = string.Equals(includeVolumesStr, "true", StringComparison.OrdinalIgnoreCase);
+
+        await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
+            "in_progress", "Starting system prune…", 5, ct: ct);
+
+        long totalReclaimed = 0;
+        var  results        = new List<string>();
+
+        try
+        {
+            var client = clientFactory.GetClient();
+
+            // 1. Containers first (images cannot be pruned if containers reference them)
+            await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
+                "in_progress", "Pruning stopped containers…", 20, ct: ct);
+            try
+            {
+                var cResponse = await client.Containers.PruneContainersAsync(cancellationToken: ct);
+                totalReclaimed += (long)cResponse.SpaceReclaimed;
+                results.Add($"{cResponse.ContainersDeleted?.Count ?? 0} container(s)");
+            }
+            catch (Exception ex) { logger.LogWarning(ex, "[DOCKER-PRUNE] system.prune containers step failed"); }
+
+            // 2. Images
+            await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
+                "in_progress", "Pruning unused images…", 50, ct: ct);
+            try
+            {
+                var iResponse = await client.Images.PruneImagesAsync(cancellationToken: ct);
+                totalReclaimed += (long)iResponse.SpaceReclaimed;
+                results.Add($"{iResponse.ImagesDeleted?.Count ?? 0} image(s)");
+            }
+            catch (Exception ex) { logger.LogWarning(ex, "[DOCKER-PRUNE] system.prune images step failed"); }
+
+            // 3. Volumes (only if requested — DESTRUCTIVE, may contain data)
+            if (includeVolumes)
+            {
+                await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
+                    "in_progress", "Pruning unused volumes…", 75, ct: ct);
+                try
+                {
+                    var vResponse = await client.Volumes.PruneAsync(cancellationToken: ct);
+                    totalReclaimed += (long)vResponse.SpaceReclaimed;
+                    results.Add($"{vResponse.VolumesDeleted?.Count ?? 0} volume(s)");
+                }
+                catch (Exception ex) { logger.LogWarning(ex, "[DOCKER-PRUNE] system.prune volumes step failed"); }
+            }
+
+            var summary = results.Count > 0
+                ? $"Removed {string.Join(", ", results)}, reclaimed {FormatBytes(totalReclaimed)}"
+                : "Nothing to remove";
+
+            logger.LogInformation("[DOCKER-PRUNE] system.prune op={Op} reclaimed={Bytes} includeVolumes={V}",
+                cmd.OperationId, totalReclaimed, includeVolumes);
+
+            await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
+                "completed", summary, 100, ct: ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "[DOCKER-PRUNE] system.prune failed op={Op}", cmd.OperationId);
+            await PublishProgress(cmd.OperationId, cmd.CommandType, cmd.ServiceId, cmd.ServiceName,
+                "failed", "System prune failed", 0, ex.Message, ct: ct);
+        }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static string FormatBytes(long? bytes)
+    {
+        if (bytes is null or 0) return "0 B";
+        double b = bytes.Value;
+        if (b >= 1_073_741_824) return $"{b / 1_073_741_824:F1} GB";
+        if (b >= 1_048_576)     return $"{b / 1_048_576:F1} MB";
+        if (b >= 1_024)         return $"{b / 1_024:F1} KB";
+        return $"{b:F0} B";
+    }
+
     private Task PublishProgress(
         Guid operationId, string commandType, string serviceId, string serviceName,
         string status, string step, int percent, string? errorMessage = null,

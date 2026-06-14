@@ -27,4 +27,14 @@ public static class DockerCacheKeys
 
     public const string HealthAckPrefix = "infinity:docker:health:ack:";
     public static string HealthAck(string serviceId) => $"{HealthAckPrefix}{serviceId}";
+
+    // Host-level resource metrics (Phase 2+)
+    public const string HostMetrics        = "infinity:docker:host:metrics";
+    public const string HostMetricsHistory = "infinity:docker:host:metrics:history";
+
+    // Docker storage analysis (Phase 4)
+    public const string StorageAnalysis = "infinity:docker:storage:analysis";
+
+    // Maximum history samples to retain: 24h ÷ 30s = 2880 entries
+    public const int HostMetricsHistoryMaxEntries = 2880;
 }

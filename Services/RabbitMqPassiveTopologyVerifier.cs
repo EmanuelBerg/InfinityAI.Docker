@@ -9,14 +9,15 @@ public sealed class RabbitMqPassiveTopologyVerifier(
     IConfiguration configuration,
     ILogger<RabbitMqPassiveTopologyVerifier> logger)
 {
-    public const string InventoryExchange = "docker.inventory";
-    public const string CommandsExchange  = "docker.commands";
-    public const string ProgressExchange  = "docker.progress";
-    public const string LogsExchange      = "docker.logs";
+    public const string InventoryExchange   = "docker.inventory";
+    public const string CommandsExchange    = "docker.commands";
+    public const string ProgressExchange    = "docker.progress";
+    public const string LogsExchange        = "docker.logs";
+    public const string HostMetricsExchange = "docker.host";
 
-    // Command worker requires all four exchanges to be pre-declared by InfinityAI.Api.
+    // All exchanges are pre-declared by InfinityAI.Api's RabbitMqTopologyInitializer.
     private static readonly string[] RequiredExchanges =
-        [InventoryExchange, CommandsExchange, ProgressExchange, LogsExchange];
+        [InventoryExchange, CommandsExchange, ProgressExchange, LogsExchange, HostMetricsExchange];
 
     public async Task VerifyAsync(CancellationToken ct)
     {

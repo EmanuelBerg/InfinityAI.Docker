@@ -35,9 +35,14 @@ builder.Services.AddSingleton<DockerProgressPublisher>();
 builder.Services.AddSingleton<DockerLogPublisher>();
 builder.Services.AddSingleton<IDockerCommandExecutor, DockerCommandExecutor>();
 
+// Phase 2+: host metrics and storage analysis
+builder.Services.AddSingleton<HostMetricsCollector>();
+builder.Services.AddSingleton<DockerStorageAnalyzer>();
+
 builder.Services.AddHostedService<DockerInventoryPoller>();
 builder.Services.AddHostedService<DockerStatsCollector>();
 builder.Services.AddHostedService<DockerCommandConsumer>();
+builder.Services.AddHostedService<HostMetricsPoller>();
 
 var host = builder.Build();
 host.Run();

@@ -147,6 +147,23 @@ public sealed class DockerCommandConsumer(
                         executor.StopLogStream(subId);
                     break;
 
+                // Cleanup operations (Phase 5)
+                case "images.prune":
+                    await executor.PruneImagesAsync(cmd, ct);
+                    break;
+
+                case "containers.prune":
+                    await executor.PruneContainersAsync(cmd, ct);
+                    break;
+
+                case "volumes.prune":
+                    await executor.PruneVolumesAsync(cmd, ct);
+                    break;
+
+                case "system.prune":
+                    await executor.PruneSystemAsync(cmd, ct);
+                    break;
+
                 default:
                     logger.LogWarning("[DOCKER-CMD-CONSUMER] Unknown command type '{Type}' — discarding", cmd.CommandType);
                     return MessageDisposition.NackDiscard;
